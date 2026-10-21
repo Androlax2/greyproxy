@@ -293,10 +293,13 @@ func (p *program) run(cfg *config.Config) error {
 		}()
 	}
 
-	// Build and start greyproxy service if configured
+	// Build and start greyproxy service if configured. A failure stops the
+	// process: the proxies are already serving, and without the plugins this
+	// service registers they would drop (or, for a config without admission,
+	// allow) every connection while the process looks healthy.
 	if p.srvGreyproxy == nil {
 		if err := p.buildGreyproxyService(); err != nil {
-			logger.Default().Warnf("greyproxy: %v", err)
+			return fmt.Errorf("greyproxy: %w", err)
 		}
 	}
 
