@@ -83,8 +83,15 @@ func SessionsCreateHandler(s *Shared) gin.HandlerFunc {
 			}
 		}
 
-		if len(input.Mappings) == 0 && len(resolvedGlobals) == 0 && len(input.NetworkRules) == 0 && !input.AllowAll {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "no credentials or network rules provided"})
+		if input.ClientSecret != "" && len(input.ClientSecret) < greyproxy.MinClientSecretLength {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("client_secret must be at least %d characters", greyproxy.MinClientSecretLength),
+			})
+			return
+		}
+
+		if len(input.Mappings) == 0 && len(resolvedGlobals) == 0 && len(input.NetworkRules) == 0 && !input.AllowAll && input.ClientSecret == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no credentials, network rules or client secret provided"})
 			return
 		}
 

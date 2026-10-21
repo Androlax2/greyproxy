@@ -29,17 +29,18 @@ func (l *stringList) Set(value string) error {
 }
 
 var (
-	cfgFile            string
-	outputFormat       string
-	services           stringList
-	nodes              stringList
-	debug              bool
-	trace              bool
-	metricsAddr        string
-	silentAllow        bool
-	middlewareURLFlags stringList
-	middlewareCmdFlags stringList
-	hostFlag           string
+	cfgFile             string
+	outputFormat        string
+	services            stringList
+	nodes               stringList
+	debug               bool
+	trace               bool
+	metricsAddr         string
+	silentAllow         bool
+	middlewareURLFlags  stringList
+	middlewareCmdFlags  stringList
+	hostFlag            string
+	requireClientSecret bool
 )
 
 func init() {
@@ -101,6 +102,7 @@ func parseFlags() {
 	flag.Var(&middlewareURLFlags, "middleware", "middleware service URL (ws:// or http://); repeatable, cascades in declaration order")
 	flag.Var(&middlewareCmdFlags, "middleware-cmd", "command to spawn as a stdio middleware (e.g. 'uv run mw.py'); repeatable, cascades after --middleware entries")
 	flag.StringVar(&hostFlag, "host", "", "default bind interface for listeners written as a bare port (e.g. \":43080\"); IP literal only, defaults to 127.0.0.1")
+	flag.BoolVar(&requireClientSecret, "require-client-secret", false, "refuse proxy logins whose name has no registered client secret (same as greyproxy.requireClientSecret)")
 	flag.Parse()
 
 	if _, err := parser.ParseHostFlag(hostFlag); err != nil {

@@ -14,6 +14,12 @@ type Config struct {
 	Notifications NotificationsConfig `yaml:"notifications" json:"notifications"`
 	Docker        DockerConfig        `yaml:"docker" json:"docker"`
 	Middlewares   []MiddlewareConfig  `yaml:"middlewares,omitempty" json:"middlewares,omitempty"`
+	// RequireClientSecret refuses proxy logins whose name has no live session
+	// with a client_secret, except ClientSecretExempt names and the anonymous
+	// login while AllowAnonymousClients is true (nil means true).
+	RequireClientSecret   bool     `yaml:"requireClientSecret" json:"requireClientSecret"`
+	ClientSecretExempt    []string `yaml:"clientSecretExempt,omitempty" json:"clientSecretExempt,omitempty"`
+	AllowAnonymousClients *bool    `yaml:"allowAnonymousClients,omitempty" json:"allowAnonymousClients,omitempty"`
 }
 
 // NotificationsConfig controls OS desktop notifications for pending requests.
