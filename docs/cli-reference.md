@@ -35,7 +35,16 @@ greyproxy serve -C greyproxy.yml
 | `-metrics <addr>` | Expose Prometheus-style metrics on the given address. |
 | `-silent-allow` | Enter silent allow-all mode at startup. Requests pass through without prompting until the process restarts. |
 | `--host <ip>` | Default bind interface for listeners written as a bare port (e.g. `:43080`). IP literal only (hostnames are rejected). Defaults to `127.0.0.1`. Pass `--host 0.0.0.0` to bind every interface — the choice is logged with a warning at startup. |
+| `--require-api-token` | Require the token from the data directory's `api-token` file on the dashboard and REST API. Same as `greyproxy.requireApiToken: true`. See [API authentication](api.md#authentication). |
 | `-V` | Print version information and exit. |
+
+### `greyproxy dashboard-url`
+
+Print a dashboard login link signed with the API token. The link works once, within 2 minutes, and sets the dashboard's session cookie. Only needed when `requireApiToken` is on.
+
+```bash
+greyproxy dashboard-url
+```
 
 ### `greyproxy cert`
 
