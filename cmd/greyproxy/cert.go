@@ -295,8 +295,15 @@ func handleCertUninstall() {
 
 // handleCertReload sends a reload request to the running greyproxy instance.
 func handleCertReload() {
-	apiURL := "http://localhost:43080/api/cert/reload"
-	resp, err := http.Post(apiURL, "application/json", bytes.NewReader(nil)) //nolint:gosec,noctx // localhost only, no user input
+	apiURL := localAPIBaseURL + "/api/cert/reload"
+	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(nil)) //nolint:noctx // localhost only, no user input
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build request for %s: %v\n", apiURL, err)
+		os.Exit(1)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	addLocalAPIToken(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // localhost only, no user input
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to reach greyproxy at %s: %v\n", apiURL, err)
 		fmt.Fprintf(os.Stderr, "Is greyproxy running? Check with: greyproxy service status\n")

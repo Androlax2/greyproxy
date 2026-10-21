@@ -32,6 +32,11 @@ type Shared struct {
 	Version         string
 	Ports           map[string]int
 	DataHome        string
+	// APIToken is the content of the data directory's api-token file.
+	// RequireAPIToken turns on the check for every route except /api/health,
+	// /static and the login routes.
+	APIToken        string
+	RequireAPIToken bool
 	ReloadCertFn    func() error
 	CertMtimeFn     func() time.Time
 	// MiddlewareStatusesFn returns a live snapshot of the connected
@@ -56,6 +61,11 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 		pathPrefix = "/"
 	}
 
+	// Registered on the engine before any group so routes added later by
+	// callers (the UI pages and /htmx endpoints) are guarded too.
+	auth := newAPIAuth(s.APIToken, s.RequireAPIToken, pathPrefix)
+	r.Use(auth.middleware())
+
 	// Redirect engine root to dashboard when pathPrefix is not "/"
 	if pathPrefix != "/" {
 		dest := strings.TrimRight(pathPrefix, "/") + "/dashboard"
@@ -65,6 +75,8 @@ func NewRouter(s *Shared, pathPrefix string) (*gin.Engine, *gin.RouterGroup) {
 	}
 
 	g := r.Group(pathPrefix)
+
+	auth.registerRoutes(g)
 
 	// REST API
 	api := g.Group("/api")
