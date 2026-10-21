@@ -30,10 +30,12 @@ type autherWrapper struct {
 	r    *autherRegistry
 }
 
+// Authenticate refuses every login when the named auther is not registered,
+// for the same reason as bypassWrapper.Contains.
 func (w *autherWrapper) Authenticate(ctx context.Context, user, password string, opts ...auth.Option) (string, bool) {
 	v := w.r.get(w.name)
 	if v == nil {
-		return "", true
+		return "", false
 	}
 	return v.Authenticate(ctx, user, password, opts...)
 }
