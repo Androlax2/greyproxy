@@ -122,6 +122,7 @@ warning at startup so the operator can confirm the choice was deliberate.
 | `docker.enabled` | bool | When true, greyproxy queries the Docker or Podman socket to resolve source IPs to container names in the activity log and rule matcher. |
 | `docker.socket` | string | Path to the Docker/Podman socket. Defaults to `/var/run/docker.sock`. |
 | `docker.cacheTTL` | duration | How long resolved container names are cached. Go duration syntax (for example `30s`, `1m`). |
+| `requireApiToken` | bool | Require the token from the data directory's `api-token` file on the dashboard and REST API (default `false`). See [API authentication](api.md#authentication). |
 
 ## Default Ports
 
@@ -183,6 +184,7 @@ Typical files inside that directory:
 - `ca-cert.pem` and `ca-key.pem`: MITM certificate authority.
 - `settings.json`: runtime settings overrides.
 - `session.key`: per-installation encryption key used for global credentials.
+- `api-token`: token for the dashboard and REST API when `requireApiToken` is on (mode `0600`).
 
 ## Full Configuration Reference
 

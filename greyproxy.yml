@@ -29,6 +29,9 @@ greyproxy:
   resolver: resolver-0
   notifications:
     enabled: true
+  # Require the token from the data directory's api-token file on the dashboard
+  # and REST API. The file is created either way. See docs/api.md.
+  requireApiToken: false
 
 
 services:

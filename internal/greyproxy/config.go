@@ -14,6 +14,10 @@ type Config struct {
 	Notifications NotificationsConfig `yaml:"notifications" json:"notifications"`
 	Docker        DockerConfig        `yaml:"docker" json:"docker"`
 	Middlewares   []MiddlewareConfig  `yaml:"middlewares,omitempty" json:"middlewares,omitempty"`
+	// RequireAPIToken makes the dashboard and REST API require the token from
+	// the data directory's api-token file. The file is created either way, so
+	// clients can start sending it before the check is turned on.
+	RequireAPIToken bool `yaml:"requireApiToken" json:"requireApiToken"`
 }
 
 // NotificationsConfig controls OS desktop notifications for pending requests.
