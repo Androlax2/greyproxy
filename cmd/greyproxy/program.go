@@ -1022,7 +1022,15 @@ func (p *program) buildGreyproxyService() error {
 	}
 
 	// Create and register gost plugins
-	autherPlugin := greyproxy_plugins.NewAuther()
+	allowAnonymousClients := gaCfg.AllowAnonymousClients == nil || *gaCfg.AllowAnonymousClients
+	autherPlugin := greyproxy_plugins.NewAuther(shared.DB, greyproxy_plugins.ClientSecretPolicy{
+		RequireClientSecret: gaCfg.RequireClientSecret || requireClientSecret,
+		ExemptNames:         gaCfg.ClientSecretExempt,
+		AllowAnonymous:      allowAnonymousClients,
+	})
+	if gaCfg.RequireClientSecret || requireClientSecret {
+		log.Infof("client secrets required (anonymous clients allowed: %v, exempt: %v)", allowAnonymousClients, gaCfg.ClientSecretExempt)
+	}
 	admissionPlugin := greyproxy_plugins.NewAdmission()
 	sysDNS := systemDNSServers()[0]
 	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache, sysDNS)

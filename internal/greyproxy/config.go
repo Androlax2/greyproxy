@@ -18,6 +18,12 @@ type Config struct {
 	// the data directory's api-token file. The file is created either way, so
 	// clients can start sending it before the check is turned on.
 	RequireAPIToken bool `yaml:"requireApiToken" json:"requireApiToken"`
+	// RequireClientSecret refuses proxy logins whose name has no live session
+	// with a client_secret, except ClientSecretExempt names and the anonymous
+	// login while AllowAnonymousClients is true (nil means true).
+	RequireClientSecret   bool     `yaml:"requireClientSecret" json:"requireClientSecret"`
+	ClientSecretExempt    []string `yaml:"clientSecretExempt,omitempty" json:"clientSecretExempt,omitempty"`
+	AllowAnonymousClients *bool    `yaml:"allowAnonymousClients,omitempty" json:"allowAnonymousClients,omitempty"`
 }
 
 // NotificationsConfig controls OS desktop notifications for pending requests.
