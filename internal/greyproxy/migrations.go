@@ -245,6 +245,11 @@ var migrations = []string{
 	// container_name lookup full-scans http_transactions (BLOB-heavy), which
 	// made GET /pending take ~30s on large databases.
 	`CREATE INDEX IF NOT EXISTS idx_http_transactions_container ON http_transactions(container_name);`,
+
+	// Migration 16: sessions.client_secret_hash — hex SHA-256 of the proxy
+	// password a client registered for its container name. The secret itself
+	// is never stored. NULL for sessions registered without one.
+	`ALTER TABLE sessions ADD COLUMN client_secret_hash TEXT;`,
 }
 
 func runMigrations(db *sql.DB) error {

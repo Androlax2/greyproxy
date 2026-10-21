@@ -157,6 +157,8 @@ DELETE /api/credentials/:id
 
 Sessions are short-lived; global credentials are persisted and encrypted on disk.
 
+`POST /api/sessions` accepts an optional `client_secret` (at least 32 characters): the proxy password the client will log in with, under the session's `container_name` as username. Greyproxy stores only its SHA-256 and never returns it. While the session is live, a proxy login with that name must present one of the name's registered secrets; any other password is refused (HTTP `407`, SOCKS5 authentication failure). A session may consist of a `client_secret` alone. Re-registering a `session_id` without `client_secret` removes its secret. See `requireClientSecret` in [Configuration](configuration.md) to also refuse names that registered no secret.
+
 ## Settings
 
 ```http

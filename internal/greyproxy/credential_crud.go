@@ -19,6 +19,9 @@ type SessionCreateInput struct {
 	GlobalCredentials []string             `json:"global_credentials,omitempty"`
 	NetworkRules      []SessionNetworkRule `json:"network_rules,omitempty"`
 	AllowAll          bool                 `json:"allow_all,omitempty"`
+	// ClientSecret is the proxy password the client will log in with. Only its
+	// hash is stored, and no endpoint returns it.
+	ClientSecret string `json:"client_secret,omitempty"`
 }
 
 // CreateOrUpdateSession creates or upserts a credential substitution session.
@@ -60,9 +63,15 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 		allowAllInt = 1
 	}
 
+	var clientSecretHash *string
+	if input.ClientSecret != "" {
+		hash := HashClientSecret(input.ClientSecret)
+		clientSecretHash = &hash
+	}
+
 	_, err = db.WriteDB().Exec(
-		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds, created_at, expires_at, last_heartbeat, allow_all)
-		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'), ?)
+		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds, created_at, expires_at, last_heartbeat, allow_all, client_secret_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'), ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   container_name = excluded.container_name,
 		   mappings_enc = excluded.mappings_enc,
@@ -71,9 +80,10 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 		   ttl_seconds = excluded.ttl_seconds,
 		   expires_at = excluded.expires_at,
 		   last_heartbeat = excluded.last_heartbeat,
-		   allow_all = excluded.allow_all`,
+		   allow_all = excluded.allow_all,
+		   client_secret_hash = excluded.client_secret_hash`,
 		input.SessionID, input.ContainerName, mappingsEnc, string(labelsJSON), string(metadataJSON),
-		input.TTLSeconds, input.TTLSeconds, allowAllInt,
+		input.TTLSeconds, input.TTLSeconds, allowAllInt, clientSecretHash,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("upsert session: %w", err)

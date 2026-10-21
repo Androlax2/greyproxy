@@ -29,18 +29,19 @@ func (l *stringList) Set(value string) error {
 }
 
 var (
-	cfgFile            string
-	outputFormat       string
-	services           stringList
-	nodes              stringList
-	debug              bool
-	trace              bool
-	metricsAddr        string
-	silentAllow        bool
-	middlewareURLFlags stringList
-	middlewareCmdFlags stringList
-	hostFlag           string
-	requireAPIToken    bool
+	cfgFile             string
+	outputFormat        string
+	services            stringList
+	nodes               stringList
+	debug               bool
+	trace               bool
+	metricsAddr         string
+	silentAllow         bool
+	middlewareURLFlags  stringList
+	middlewareCmdFlags  stringList
+	hostFlag            string
+	requireAPIToken     bool
+	requireClientSecret bool
 )
 
 func init() {
@@ -103,6 +104,7 @@ func parseFlags() {
 	flag.Var(&middlewareCmdFlags, "middleware-cmd", "command to spawn as a stdio middleware (e.g. 'uv run mw.py'); repeatable, cascades after --middleware entries")
 	flag.StringVar(&hostFlag, "host", "", "default bind interface for listeners written as a bare port (e.g. \":43080\"); IP literal only, defaults to 127.0.0.1")
 	flag.BoolVar(&requireAPIToken, "require-api-token", false, "require the token from the data directory's api-token file on the dashboard and REST API (same as greyproxy.requireApiToken)")
+	flag.BoolVar(&requireClientSecret, "require-client-secret", false, "refuse proxy logins whose name has no registered client secret (same as greyproxy.requireClientSecret)")
 	flag.Parse()
 
 	if _, err := parser.ParseHostFlag(hostFlag); err != nil {
