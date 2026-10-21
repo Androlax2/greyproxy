@@ -30,10 +30,13 @@ type bypassWrapper struct {
 	r    *bypassRegistry
 }
 
+// Contains blocks everything when the named bypass is not registered: a
+// config that names a bypass expects it to filter, so a missing one (a typo,
+// or a plugin that failed to start) must not let all traffic through.
 func (w *bypassWrapper) Contains(ctx context.Context, network, addr string, opts ...bypass.Option) bool {
 	bp := w.r.get(w.name)
 	if bp == nil {
-		return false
+		return true
 	}
 	return bp.Contains(ctx, network, addr, opts...)
 }
