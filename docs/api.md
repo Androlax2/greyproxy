@@ -17,7 +17,17 @@ If you set `greyproxy.pathPrefix` in the config, all API routes are nested under
 
 ## Authentication
 
-The API does not require authentication when accessed from localhost. Greyproxy is intended to run as a local tool; exposing it on a public interface is not supported.
+By default the API does not require authentication when accessed from localhost. Greyproxy is intended to run as a local tool; exposing it on a public interface is not supported.
+
+On first start greyproxy creates an API token in its data directory (`api-token`, mode `0600`, 64 hex characters). With `greyproxy.requireApiToken: true` (or `greyproxy serve --require-api-token`), every route except `/api/health`, `/static/*` and the login routes requires it:
+
+```bash
+curl -H "Authorization: Bearer $(cat ~/.local/share/greyproxy/api-token)" http://localhost:43080/api/rules
+```
+
+Requests without a valid token get `401`; dashboard pages redirect to a login form instead. The browser signs in either by pasting the token into that form or by opening the single-use link printed by `greyproxy dashboard-url`. Both set an `HttpOnly`, `SameSite=Strict` cookie derived from the token (not the token itself).
+
+The file is created whether or not the check is on, so clients can start sending the header before you enable it.
 
 ## Health and Status
 

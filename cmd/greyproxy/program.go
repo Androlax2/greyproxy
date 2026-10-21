@@ -441,6 +441,21 @@ func (p *program) buildGreyproxyService() error {
 	shared.ConnTracker = greyproxy.NewConnTracker()
 	shared.DataHome = greyproxyDataHome()
 
+	shared.RequireAPIToken = gaCfg.RequireAPIToken || requireAPIToken
+	apiToken, err := greyproxy.LoadOrCreateAPIToken(greyproxyDataHome())
+	if err != nil {
+		if shared.RequireAPIToken {
+			// Fatal rather than returning: without this service the bypass
+			// plugin is never registered and the proxies would allow everything.
+			log.Fatalf("API token required but unavailable: %v", err)
+		}
+		log.Warnf("API token unavailable (the check is off, so the API stays open): %v", err)
+	}
+	shared.APIToken = apiToken
+	if shared.RequireAPIToken {
+		log.Infof("API token check enabled (token file: %s)", greyproxy.APITokenPath(greyproxyDataHome()))
+	}
+
 	// User settings (persisted to disk, merged with defaults from config).
 	settingsPath := filepath.Join(greyproxyDataHome(), "settings.json")
 	shared.Settings = greyproxy.NewSettingsManager(settingsPath, gaCfg.Notifications.Enabled)
@@ -1017,9 +1032,13 @@ func (p *program) buildGreyproxyService() error {
 		log.Infof("client secrets required (anonymous clients allowed: %v, exempt: %v)", allowAnonymousClients, gaCfg.ClientSecretExempt)
 	}
 	admissionPlugin := greyproxy_plugins.NewAdmission()
-	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver, allowAllManager)
 	sysDNS := systemDNSServers()[0]
 	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache, sysDNS)
+	selfPorts := make([]int, 0, len(ports))
+	for _, port := range ports {
+		selfPorts = append(selfPorts, port)
+	}
+	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver, allowAllManager, selfPorts, resolverPlugin)
 	log.Infof("dns resolver: upstream connections will resolve via %s", sysDNS)
 
 	_ = registry.AutherRegistry().Register(gaCfg.Auther, autherPlugin)

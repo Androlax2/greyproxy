@@ -40,6 +40,7 @@ var (
 	middlewareURLFlags  stringList
 	middlewareCmdFlags  stringList
 	hostFlag            string
+	requireAPIToken     bool
 	requireClientSecret bool
 )
 
@@ -102,6 +103,7 @@ func parseFlags() {
 	flag.Var(&middlewareURLFlags, "middleware", "middleware service URL (ws:// or http://); repeatable, cascades in declaration order")
 	flag.Var(&middlewareCmdFlags, "middleware-cmd", "command to spawn as a stdio middleware (e.g. 'uv run mw.py'); repeatable, cascades after --middleware entries")
 	flag.StringVar(&hostFlag, "host", "", "default bind interface for listeners written as a bare port (e.g. \":43080\"); IP literal only, defaults to 127.0.0.1")
+	flag.BoolVar(&requireAPIToken, "require-api-token", false, "require the token from the data directory's api-token file on the dashboard and REST API (same as greyproxy.requireApiToken)")
 	flag.BoolVar(&requireClientSecret, "require-client-secret", false, "refuse proxy logins whose name has no registered client secret (same as greyproxy.requireClientSecret)")
 	flag.Parse()
 
@@ -171,6 +173,9 @@ func main() {
 	case "cert":
 		handleCert(os.Args[2:])
 
+	case "dashboard-url":
+		handleDashboardURL(os.Args[2:])
+
 	case "-V", "--version":
 		_, _ = fmt.Fprintf(os.Stdout, "greyproxy %s (%s %s/%s)\n  built:  %s\n  commit: %s\n",
 			version, runtime.Version(), runtime.GOOS, runtime.GOARCH, buildTime, gitCommit)
@@ -189,6 +194,7 @@ Usage: greyproxy <command>
 Commands:
   serve       Run the proxy server in foreground
   cert        Manage MITM CA certificate (generate/install/uninstall)
+  dashboard-url  Print a single-use dashboard login link (when requireApiToken is on)
   install     Install binary and register as a background service [-f]
   uninstall   Stop service, remove registration and binary [-f]
   service     Manage the OS service (start/stop/restart/status/...)

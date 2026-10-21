@@ -36,6 +36,12 @@ entries (e.g. `addr: "0.0.0.0:43080"`) are honoured as-is.
 When the resolved host is an unspecified address (`0.0.0.0` or `::`),
 greyproxy logs a warning at startup so the choice is visible in the logs.
 
+Loopback alone does not stop other local processes, such as sandboxes or
+containers, from reaching the management API. Set
+`greyproxy.requireApiToken: true` to require the token from the data
+directory's `api-token` file on the dashboard and REST API. See
+[API authentication](docs/api.md#authentication).
+
 ## Supported Versions
 
 Security fixes target the latest tagged release.
