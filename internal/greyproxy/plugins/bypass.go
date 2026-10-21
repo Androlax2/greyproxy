@@ -10,6 +10,7 @@ import (
 
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/bypass"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
+	"github.com/greyhavenhq/greyproxy/internal/gostcore/resolver"
 	ctxvalue "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	greyproxy "github.com/greyhavenhq/greyproxy/internal/greyproxy"
 )
@@ -39,10 +40,13 @@ type Bypass struct {
 	connTracker *greyproxy.ConnTracker
 	docker      ContainerResolver // optional; nil means no Docker resolution
 	allowAll    AllowAllChecker   // optional; nil means feature is disabled
+	selfGuard   *selfGuard
 	log         logger.Logger
 }
 
-func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker, docker ContainerResolver, allowAll AllowAllChecker) *Bypass {
+// selfPorts are greyproxy's own listening ports (API and proxy services);
+// hostResolver resolves destination hostnames to check them against those ports.
+func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.EventBus, waiters *greyproxy.WaiterTracker, connTracker *greyproxy.ConnTracker, docker ContainerResolver, allowAll AllowAllChecker, selfPorts []int, hostResolver resolver.Resolver) *Bypass {
 	return &Bypass{
 		db:          db,
 		cache:       cache,
@@ -51,6 +55,7 @@ func NewBypass(db *greyproxy.DB, cache *greyproxy.DNSCache, bus *greyproxy.Event
 		connTracker: connTracker,
 		docker:      docker,
 		allowAll:    allowAll,
+		selfGuard:   newSelfGuard(selfPorts, hostResolver),
 		log: logger.Default().WithFields(map[string]any{
 			"kind":   "bypass",
 			"bypass": "greyproxy",
@@ -75,6 +80,10 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	var o bypass.Options
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	if b.blockIfTargetsSelf(ctx, network, addr, o.Service, start) {
+		return true // block
 	}
 
 	// Silent mode: bypass all rule evaluation for the duration.
@@ -221,6 +230,37 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 
 	// In blacklist mode: return true to BLOCK
 	return !allowed
+}
+
+// blockIfTargetsSelf logs and reports true when addr points at one of
+// greyproxy's own listeners. See selfGuard.
+func (b *Bypass) blockIfTargetsSelf(ctx context.Context, network, addr, service string, start time.Time) bool {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || !b.selfGuard.targetsSelf(ctx, host, port) {
+		return false
+	}
+
+	clientID := string(ctxvalue.ClientIDFromContext(ctx))
+	srcIP := ""
+	if srcAddr := ctxvalue.SrcAddrFromContext(ctx); srcAddr != nil {
+		srcIP, _, _ = net.SplitHostPort(srcAddr.String())
+	}
+	var containerName, containerID string
+	if b.docker != nil && srcIP != "" {
+		containerName, containerID = b.docker.ResolveIP(srcIP)
+	}
+	if containerName == "" {
+		containerName, containerID = ResolveIdentity(clientID, srcIP)
+	}
+
+	elapsed := time.Since(start).Milliseconds()
+	go b.logRequest(containerName, containerID, host, port, "", methodFromService(service), "blocked", nil, &elapsed)
+	b.log.Warnf("SELF-BLOCK %s -> %s:%d (%s): destination is greyproxy's own listener", containerName, host, port, network)
+	return true
 }
 
 // waitForApproval subscribes to the event bus and waits up to gracePeriod for

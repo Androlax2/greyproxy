@@ -1009,9 +1009,13 @@ func (p *program) buildGreyproxyService() error {
 	// Create and register gost plugins
 	autherPlugin := greyproxy_plugins.NewAuther()
 	admissionPlugin := greyproxy_plugins.NewAdmission()
-	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver, allowAllManager)
 	sysDNS := systemDNSServers()[0]
 	resolverPlugin := greyproxy_plugins.NewResolver(shared.Cache, sysDNS)
+	selfPorts := make([]int, 0, len(ports))
+	for _, port := range ports {
+		selfPorts = append(selfPorts, port)
+	}
+	bypassPlugin := greyproxy_plugins.NewBypass(shared.DB, shared.Cache, shared.Bus, shared.Waiters, shared.ConnTracker, dockerResolver, allowAllManager, selfPorts, resolverPlugin)
 	log.Infof("dns resolver: upstream connections will resolve via %s", sysDNS)
 
 	_ = registry.AutherRegistry().Register(gaCfg.Auther, autherPlugin)
