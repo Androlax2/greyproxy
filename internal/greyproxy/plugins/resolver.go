@@ -61,6 +61,14 @@ func NewResolver(cache *greyproxy.DNSCache, dnsServer string) *Resolver {
 func (r *Resolver) Resolve(ctx context.Context, network, host string, opts ...resolver.Option) ([]net.IP, error) {
 	r.log.Debugf("resolve: %s/%s", host, network)
 
+	if ip := net.ParseIP(host); ip != nil {
+		isIPv4 := ip.To4() != nil
+		if (network == "ip4" && !isIPv4) || (network == "ip6" && isIPv4) {
+			return nil, &net.DNSError{Err: "no suitable address found", Name: host, IsNotFound: true}
+		}
+		return []net.IP{ip}, nil
+	}
+
 	key := network + ":" + host
 
 	// Check forward cache first.
