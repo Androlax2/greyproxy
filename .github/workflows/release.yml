@@ -5,6 +5,8 @@ on:
     # run only against tags
     tags:
       - 'v*'
+      # Cockpit releases of the fork are built by cockpit-release.yml.
+      - '!v*-cockpit.*'
 
 permissions:
   contents: write

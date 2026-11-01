@@ -1,0 +1,160 @@
+# Builds the greyproxy that Cockpit installs (Androlax2/agent-cockpit pins a release of this fork).
+# A tag v<upstream version>-cockpit.<n> on a commit of the dotfiles branch publishes a release;
+# pull requests run the same build and smoke test without publishing. See docs/releasing.md.
+name: cockpit-release
+
+on:
+  push:
+    tags:
+      - 'v*-cockpit.*'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cockpit-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_name: ${{ steps.version.outputs.release_name }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The upstream tags and the dotfiles branch are needed to check the release tag.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # go.mod's toolchain line pins the Go version. No module cache: a release build must not
+      # restore anything a pull request could have written.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Resolve the release name and version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        # Upstream's release tags come from upstream itself: syncing the fork does not copy tags,
+        # and a stale tag list would let a tag name an older version than the code it ships.
+        run: |
+          git fetch --no-tags https://github.com/GreyhavenHQ/greyproxy.git '+refs/tags/v*:refs/tags/v*'
+          upstream_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' HEAD)
+          if [[ $EVENT_NAME == push ]]; then
+            if [[ ! $REF_NAME =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-cockpit\.[1-9][0-9]*$ ]]; then
+              echo "::error::tag '$REF_NAME' is not v<upstream version>-cockpit.<n>"
+              exit 1
+            fi
+            if [[ v${BASH_REMATCH[1]} != "$upstream_tag" ]]; then
+              echo "::error::tag '$REF_NAME' names v${BASH_REMATCH[1]}, but the commit's nearest upstream release is $upstream_tag"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor HEAD origin/dotfiles; then
+              echo "::error::$GITHUB_SHA is not on the dotfiles branch; tag a commit Cockpit runs"
+              exit 1
+            fi
+            release_name=$REF_NAME
+          else
+            release_name="${upstream_tag}-cockpit.0-pr$(git rev-parse --short=12 HEAD)"
+          fi
+          echo "release_name=$release_name" >>"$GITHUB_OUTPUT"
+          echo "version=${upstream_tag#v}" >>"$GITHUB_OUTPUT"
+
+      - name: Test
+        run: go test -mod=readonly -count=1 ./...
+
+      - name: Build the archives
+        run: scripts/cockpit-release.sh "${{ steps.version.outputs.release_name }}" "${{ steps.version.outputs.version }}" dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  smoke-test:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Run greyproxy --version
+        env:
+          ARCHIVE: dist/greyproxy-${{ needs.build.outputs.release_name }}-${{ matrix.target }}.tar.gz
+          VERSION: ${{ needs.build.outputs.version }}
+          # The commit that was built: on a pull request, the merge commit actions/checkout uses.
+          COMMIT: ${{ github.sha }}
+        run: |
+          contents=$(tar -tzf "$ARCHIVE" | LC_ALL=C sort | tr '\n' ' ')
+          [[ $contents == 'LICENSE greyproxy ' ]] || { echo "::error::unexpected archive contents: $contents"; exit 1; }
+          mkdir unpacked
+          tar -xzf "$ARCHIVE" -C unpacked
+          output=$(unpacked/greyproxy --version)
+          echo "$output"
+          grep -q "^greyproxy $VERSION " <<<"$output"
+          grep -q "commit: $COMMIT\$" <<<"$output"
+
+  release:
+    if: github.event_name == 'push'
+    needs: [build, smoke-test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ needs.build.outputs.release_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          {
+            echo "greyproxy $VERSION from the dotfiles branch of Androlax2/greyproxy, built for Cockpit."
+            echo
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "Each archive holds the \`greyproxy\` binary and its MIT \`LICENSE\`. Verify with:"
+            echo
+            echo '```'
+            echo "sha256sum --check --ignore-missing SHA256SUMS"
+            echo "gh attestation verify greyproxy-$RELEASE_NAME-linux-amd64.tar.gz -R $GITHUB_REPOSITORY"
+            echo '```'
+            echo
+            echo "SHA256SUMS:"
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } >notes.md
+          gh release create "$RELEASE_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+            --title "$RELEASE_NAME" --notes-file notes.md
