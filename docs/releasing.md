@@ -16,8 +16,8 @@ these tags.
 1. Merge the changes into `dotfiles`. Every pull request already runs the same build, the tests
    and a `greyproxy --version` smoke test on each target, without publishing anything.
 2. Pick the tag: `v<upstream version>-cockpit.<n>`, where the upstream version is the nearest
-   upstream release in the commit's history (`git describe --tags --abbrev=0 --exclude '*-*'`) and
-   `<n>` starts at 1 and goes up by one for each release on the same upstream version.
+   GreyhavenHQ/greyproxy release in the commit's history (with upstream's tags fetched:
+   `git describe --tags --abbrev=0 --exclude '*-*'`; the workflow fetches them itself) and `<n>` starts at 1 and goes up by one for each release on the same upstream version.
 3. Tag the tip of `dotfiles` and push the tag:
 
    ```bash
@@ -42,7 +42,7 @@ archives and publishes a GitHub release whose notes name the exact commit.
 The binaries are static (`CGO_ENABLED=0`), built with `-trimpath` by the Go toolchain that
 `go.mod`'s `toolchain` line pins. The build time is the commit time and the archives have fixed
 metadata, so rebuilding a commit gives the same bytes: `scripts/cockpit-release.sh <tag> <version>
-dist` reproduces them locally with the same Go version.
+dist` reproduces them on Linux (GNU tar and coreutils) with the same Go version.
 
 `greyproxy --version` reports the plain upstream version (`0.4.5`), because greywall parses it and
 treats anything else as outdated; its `commit:` line tells the fork build apart.

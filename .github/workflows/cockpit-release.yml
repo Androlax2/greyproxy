@@ -41,7 +41,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+        # Upstream's release tags come from upstream itself: syncing the fork does not copy tags,
+        # and a stale tag list would let a tag name an older version than the code it ships.
         run: |
+          git fetch --no-tags https://github.com/GreyhavenHQ/greyproxy.git '+refs/tags/v*:refs/tags/v*'
           upstream_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' HEAD)
           if [[ $EVENT_NAME == push ]]; then
             if [[ ! $REF_NAME =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-cockpit\.[1-9][0-9]*$ ]]; then

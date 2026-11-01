@@ -8,7 +8,8 @@
 # anything else as outdated. The commit line tells fork builds apart.
 #
 # Two runs on the same commit with the same Go toolchain give byte-identical archives: the build
-# time is the commit time, paths are trimmed, and tar/gzip get fixed metadata. Needs GNU tar.
+# time is the commit time, paths are trimmed, VCS stamping is off (untracked files would mark the
+# binary modified), and tar/gzip get fixed metadata. Needs GNU tar and coreutils.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -46,7 +47,7 @@ for target in "${targets[@]}"; do
     mkdir -p "$staging"
 
     echo "cockpit-release: building $goos/$goarch"
-    CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -mod=readonly -trimpath \
+    CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -mod=readonly -trimpath -buildvcs=false \
         -ldflags "-s -w -X main.version=$version -X main.buildTime=$build_time -X main.gitCommit=$commit" \
         -o "$staging/greyproxy" ./cmd/greyproxy
     install -m 0644 LICENSE "$staging/LICENSE"
