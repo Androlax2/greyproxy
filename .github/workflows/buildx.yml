@@ -6,6 +6,8 @@ on:
       - main
     tags:
       - 'v*'
+      # Cockpit releases of the fork are built by cockpit-release.yml.
+      - '!v*-cockpit.*'
 
 env:
   REGISTRY: ghcr.io
