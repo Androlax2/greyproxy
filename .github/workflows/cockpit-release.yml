@@ -103,7 +103,7 @@ jobs:
           # The commit that was built: on a pull request, the merge commit actions/checkout uses.
           COMMIT: ${{ github.sha }}
         run: |
-          contents=$(tar -tzf "$ARCHIVE" | tr '\n' ' ')
+          contents=$(tar -tzf "$ARCHIVE" | LC_ALL=C sort | tr '\n' ' ')
           [[ $contents == 'LICENSE greyproxy ' ]] || { echo "::error::unexpected archive contents: $contents"; exit 1; }
           mkdir unpacked
           tar -xzf "$ARCHIVE" -C unpacked
