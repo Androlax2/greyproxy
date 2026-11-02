@@ -32,17 +32,19 @@ fi
 commit=$(git rev-parse HEAD)
 commit_epoch=$(git log -1 --format=%ct)
 build_time=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd)
-targets=(linux/amd64 linux/arm64 darwin/arm64)
+targets=(linux/amd64 linux/arm64)
 
 mkdir -p "$output_dir"
 output_dir=$(cd "$output_dir" && pwd)
 staging_root=$(mktemp -d)
 trap 'rm -rf "$staging_root"' EXIT
 
+archives=()
 for target in "${targets[@]}"; do
     goos=${target%/*}
     goarch=${target#*/}
     archive_base="greyproxy-$release_name-$goos-$goarch"
+    archives+=("$archive_base.tar.gz")
     staging="$staging_root/$archive_base"
     mkdir -p "$staging"
 
@@ -59,5 +61,5 @@ for target in "${targets[@]}"; do
         gzip -n -9 >"$output_dir/$archive_base.tar.gz"
 done
 
-(cd "$output_dir" && sha256sum -- greyproxy-"$release_name"-*.tar.gz >SHA256SUMS)
+(cd "$output_dir" && sha256sum -- "${archives[@]}" >SHA256SUMS)
 cat "$output_dir/SHA256SUMS"
