@@ -159,6 +159,12 @@ Sessions are short-lived; global credentials are persisted and encrypted on disk
 
 `POST /api/sessions` accepts an optional `client_secret` (at least 32 characters): the proxy password the client will log in with, under the session's `container_name` as username. Greyproxy stores only its SHA-256 and never returns it. While the session is live, a proxy login with that name must present one of the name's registered secrets; any other password is refused (HTTP `407`, SOCKS5 authentication failure). A session may consist of a `client_secret` alone. Re-registering a `session_id` without `client_secret` removes its secret. See `requireClientSecret` in [Configuration](configuration.md) to also refuse names that registered no secret.
 
+Session network rules and `allow_all` require a secret that matches exactly one live session under that username. Concurrent sessions can keep the same client label, but must register distinct secrets to use their own grants. Missing or shared secrets receive no session grants; the configured login policy and global/built-in rules still apply. HTTP and SOCKS5 carry this authenticated identity separately from the client label. Each authorization and pending-approval recheck validates the original session and secret, including expiry, deletion, secret removal/rotation and newly shared secrets. These checks authorize connections; they do not reauthenticate traffic inside an already established tunnel.
+
+Global rules retain priority over session rules, followed by built-in rules. Within a layer, specificity wins and deny wins ties. A session's `allow_all` is a fallback when no rule matches, so it cannot bypass a matching deny or authorize another session.
+
+Database migration 17 separates global uniqueness from per-session uniqueness, preserving existing rule IDs, metadata and audit references. Identical grants in different sessions have independent lifetimes. The migration preserves only recorded ownership: grants previously skipped by the old uniqueness constraint must be supplied again when their owning sessions are re-registered; they are never inferred from another session's grants.
+
 ## Settings
 
 ```http

@@ -16,6 +16,7 @@ import (
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/bypass"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/handler"
 	"github.com/greyhavenhq/greyproxy/internal/gostcore/logger"
+	xctx "github.com/greyhavenhq/greyproxy/internal/gostx/ctx"
 	http_handler "github.com/greyhavenhq/greyproxy/internal/gostx/handler/http"
 	socks5_handler "github.com/greyhavenhq/greyproxy/internal/gostx/handler/socks/v5"
 	xlogger "github.com/greyhavenhq/greyproxy/internal/gostx/logger"
@@ -234,11 +235,12 @@ func TestAutherNeverLogsTheSecret(t *testing.T) {
 	auther.log = recorder
 	wrongSecret := "wrong-secret-that-must-not-be-logged-0123456789"
 
-	_, _ = auther.Authenticate(context.Background(), "opencode", wrongSecret)
-	_, _ = auther.Authenticate(context.Background(), "opencode", registeredSecret)
+	ctx := xctx.ContextWithAuthResult(context.Background(), &xctx.AuthResult{})
+	_, _ = auther.Authenticate(ctx, "opencode", wrongSecret)
+	_, _ = auther.Authenticate(ctx, "opencode", registeredSecret)
 
 	for _, line := range recorder.lines {
-		if strings.Contains(line, wrongSecret) || strings.Contains(line, registeredSecret) {
+		if strings.Contains(line, wrongSecret) || strings.Contains(line, registeredSecret) || strings.Contains(line, greyproxy.HashClientSecret(registeredSecret)) {
 			t.Errorf("log line contains a secret: %q", line)
 		}
 	}

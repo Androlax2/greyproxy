@@ -63,6 +63,7 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 	_, _ = db.WriteDB().Exec(
 		`DELETE FROM rules
 		 WHERE container_pattern = ? AND destination_pattern = ? AND port_pattern = ? AND action = ?
+		   AND session_id IS NULL
 		   AND expires_at IS NOT NULL AND expires_at <= datetime('now')`,
 		input.ContainerPattern, input.DestinationPattern, input.PortPattern, input.Action,
 	)
@@ -91,10 +92,6 @@ func CreateRule(db *DB, input RuleCreateInput) (*Rule, error) {
 // ruleColumns is the SELECT list for all rule queries.
 const ruleColumns = `id, container_pattern, destination_pattern, port_pattern,
 	rule_type, action, created_at, expires_at, last_used_at, created_by, notes, session_id`
-
-// ruleColumnsQualified is the SELECT list with rules. prefix for use in JOIN queries.
-const ruleColumnsQualified = `rules.id, rules.container_pattern, rules.destination_pattern, rules.port_pattern,
-	rules.rule_type, rules.action, rules.created_at, rules.expires_at, rules.last_used_at, rules.created_by, rules.notes, rules.session_id`
 
 func GetRule(db *DB, id int64) (*Rule, error) {
 	row := db.ReadDB().QueryRow(
@@ -310,7 +307,12 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 	return result, nil
 }
 
-// FindMatchingRule finds the most specific matching rule for the given request.
+// FindMatchingRule finds a global or built-in rule for an unidentified request.
+func FindMatchingRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string) *Rule {
+	return FindMatchingSessionRule(db, containerName, destHost, destPort, resolvedHostname, nil)
+}
+
+// FindMatchingSessionRule finds the most specific rule for an authenticated request.
 // Returns nil if no rule matches (default-deny).
 //
 // Resolution uses a layered model:
@@ -321,30 +323,15 @@ func IngestRules(db *DB, rules []IngestRuleInput) (*IngestResult, error) {
 //
 // The highest-layer match wins. Within the same layer, highest specificity wins,
 // and deny beats allow at the same specificity.
-func FindMatchingRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string) *Rule {
-	// Get all non-expired rules. For session-scoped rules, JOIN with sessions and
-	// enforce two conditions:
-	//   1. The session itself is still active (not expired/deleted).
-	//   2. The session is the most recently created active session for this container.
-	//      This prevents an older session's rules from bleeding into a newer session
-	//      that was started with a different (or empty) rule set.
-	// Global and built-in rules (session_id IS NULL) are unaffected.
+func FindMatchingSessionRule(db *DB, containerName, destHost string, destPort int, resolvedHostname string, identity *SessionIdentity) *Rule {
+	sessionID, secretHash := identity.credentials(containerName)
 	rows, err := db.ReadDB().Query(
-		`SELECT `+ruleColumnsQualified+`
+		`SELECT `+ruleColumns+`
 		 FROM rules
-		 LEFT JOIN sessions ON rules.session_id = sessions.session_id
 		 WHERE (rules.expires_at IS NULL OR rules.expires_at > datetime('now'))
 		   AND (rules.session_id IS NULL
-		        OR (sessions.session_id IS NOT NULL
-		            AND sessions.expires_at > datetime('now')
-		            AND sessions.session_id = (
-		                SELECT session_id FROM sessions
-		                WHERE container_name = ?
-		                  AND expires_at > datetime('now')
-		                ORDER BY created_at DESC, rowid DESC
-		                LIMIT 1
-		            )))`,
-		containerName,
+		        OR rules.session_id = (SELECT session_id FROM sessions WHERE `+activeSessionIdentitySQL+`))`,
+		sessionID, containerName, secretHash,
 	)
 	if err != nil {
 		return nil
@@ -821,6 +808,7 @@ func findExistingRule(db *DB, containerPattern, destPattern, portPattern, action
 		`SELECT `+ruleColumns+`
 		 FROM rules
 		 WHERE container_pattern = ? AND destination_pattern = ? AND port_pattern = ? AND action = ?
+		   AND session_id IS NULL
 		   AND (expires_at IS NULL OR expires_at > datetime('now'))`,
 		containerPattern, destPattern, portPattern, action,
 	).Scan(&r.ID, &r.ContainerPattern, &r.DestinationPattern, &r.PortPattern,

@@ -69,7 +69,12 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 		clientSecretHash = &hash
 	}
 
-	_, err = db.WriteDB().Exec(
+	tx, err := db.WriteDB().Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(
 		`INSERT INTO sessions (session_id, container_name, mappings_enc, labels_json, metadata_json, ttl_seconds, created_at, expires_at, last_heartbeat, allow_all, client_secret_hash)
 		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), datetime('now'), ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
@@ -90,7 +95,9 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 	}
 
 	// On upsert, delete old session rules before creating new ones.
-	_, _ = db.WriteDB().Exec("DELETE FROM rules WHERE session_id = ?", input.SessionID)
+	if _, err := tx.Exec("DELETE FROM rules WHERE session_id = ?", input.SessionID); err != nil {
+		return nil, fmt.Errorf("replace session rules: %w", err)
+	}
 
 	// Create session-scoped network rules.
 	if len(input.NetworkRules) > 0 {
@@ -103,9 +110,11 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 			if action == "" {
 				action = "allow"
 			}
-			_, err := db.WriteDB().Exec(
-				`INSERT OR IGNORE INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by, session_id, expires_at, notes)
-				 VALUES (?, ?, ?, 'temporary', ?, ?, ?, datetime('now', '+' || ? || ' seconds'), ?)`,
+			_, err := tx.Exec(
+				`INSERT INTO rules (container_pattern, destination_pattern, port_pattern, rule_type, action, created_by, session_id, expires_at, notes)
+				 VALUES (?, ?, ?, 'temporary', ?, ?, ?, datetime('now', '+' || ? || ' seconds'), ?)
+				 ON CONFLICT(session_id, container_pattern, destination_pattern, port_pattern, action)
+				 WHERE session_id IS NOT NULL DO NOTHING`,
 				input.ContainerName, nr.DestinationPattern, port, action,
 				"session:"+input.SessionID, input.SessionID, input.TTLSeconds, nr.Notes,
 			)
@@ -113,6 +122,9 @@ func CreateOrUpdateSession(db *DB, input SessionCreateInput, encryptionKey []byt
 				return nil, fmt.Errorf("create session rule %q: %w", nr.DestinationPattern, err)
 			}
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit session: %w", err)
 	}
 
 	// Re-read from DB to get the canonical timestamps
@@ -249,13 +261,13 @@ func DeleteExpiredSessions(db *DB) ([]string, error) {
 	return ids, nil
 }
 
-// IsContainerAllowAll checks if the given container has an active session with allow_all enabled.
-func IsContainerAllowAll(db *DB, containerName string) bool {
+// IsSessionAllowAll checks the authenticated session's learning-mode grant.
+func IsSessionAllowAll(db *DB, containerName string, identity *SessionIdentity) bool {
+	sessionID, secretHash := identity.credentials(containerName)
 	var count int
 	err := db.ReadDB().QueryRow(
-		`SELECT COUNT(*) FROM sessions
-		 WHERE container_name = ? AND allow_all = 1 AND expires_at > datetime('now')`,
-		containerName,
+		`SELECT COUNT(*) FROM sessions WHERE allow_all = 1 AND `+activeSessionIdentitySQL,
+		sessionID, containerName, secretHash,
 	).Scan(&count)
 	return err == nil && count > 0
 }

@@ -1,6 +1,7 @@
 package greyproxy
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -250,6 +251,36 @@ var migrations = []string{
 	// password a client registered for its container name. The secret itself
 	// is never stored. NULL for sessions registered without one.
 	`ALTER TABLE sessions ADD COLUMN client_secret_hash TEXT;`,
+
+	// Migration 17: each session owns its rules independently of other sessions
+	// and globals. Rebuild to remove the original table-level UNIQUE constraint.
+	`CREATE TABLE rules_new (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		container_pattern TEXT NOT NULL,
+		destination_pattern TEXT NOT NULL,
+		port_pattern TEXT NOT NULL DEFAULT '*',
+		rule_type TEXT NOT NULL DEFAULT 'permanent' CHECK (rule_type IN ('permanent', 'temporary')),
+		action TEXT NOT NULL DEFAULT 'allow' CHECK (action IN ('allow', 'deny')),
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		expires_at DATETIME,
+		last_used_at DATETIME,
+		created_by TEXT NOT NULL DEFAULT 'admin',
+		notes TEXT,
+		session_id TEXT DEFAULT NULL
+	);
+	INSERT INTO rules_new SELECT * FROM rules;
+	UPDATE sqlite_sequence SET seq = MAX(seq, COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'rules'), 0))
+		WHERE name = 'rules_new';
+	DROP TABLE rules;
+	ALTER TABLE rules_new RENAME TO rules;
+	CREATE INDEX idx_rules_container ON rules(container_pattern);
+	CREATE INDEX idx_rules_destination ON rules(destination_pattern);
+	CREATE INDEX idx_rules_expires ON rules(expires_at);
+	CREATE INDEX idx_rules_session_id ON rules(session_id);
+	CREATE UNIQUE INDEX idx_rules_global_unique
+		ON rules(container_pattern, destination_pattern, port_pattern, action) WHERE session_id IS NULL;
+	CREATE UNIQUE INDEX idx_rules_session_unique
+		ON rules(session_id, container_pattern, destination_pattern, port_pattern, action) WHERE session_id IS NOT NULL;`,
 }
 
 func runMigrations(db *sql.DB) error {
@@ -271,12 +302,46 @@ func runMigrations(db *sql.DB) error {
 			continue
 		}
 
-		if _, err := db.Exec(m); err != nil {
-			return fmt.Errorf("run migration %d: %w", version, err)
-		}
-		if _, err := db.Exec("INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
-			return fmt.Errorf("record migration %d: %w", version, err)
+		if err := runMigration(db, version, m); err != nil {
+			return fmt.Errorf("migration %d: %w", version, err)
 		}
 	}
 	return nil
+}
+
+func runMigration(db *sql.DB, version int, migration string) (err error) {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if version == 17 {
+		// DROP TABLE must not null audit references while replacing rules.
+		var foreignKeys int
+		if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+			return err
+		}
+		defer func() {
+			_, restoreErr := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA foreign_keys = %d", foreignKeys))
+			if err == nil {
+				err = restoreErr
+			}
+		}()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(migration); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
