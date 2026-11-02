@@ -37,7 +37,7 @@ func init() {
 }
 
 type socks5Handler struct {
-	selector gosocks5.Selector
+	selector *serverSelector
 	md       metadata
 	options  handler.Options
 	stats    *stats_util.HandlerStats
@@ -166,7 +166,10 @@ func (h *socks5Handler) Handle(ctx context.Context, conn net.Conn, opts ...handl
 
 	conn.SetReadDeadline(time.Now().Add(h.md.readTimeout))
 
-	sc := gosocks5.ServerConn(conn, h.selector)
+	ctx = xctx.ContextWithAuthResult(ctx, &xctx.AuthResult{})
+	selector := *h.selector
+	selector.ctx = ctx
+	sc := gosocks5.ServerConn(conn, &selector)
 	req, err := gosocks5.ReadRequest(sc)
 	if err != nil {
 		log.Error(err)

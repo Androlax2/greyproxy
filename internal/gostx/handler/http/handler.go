@@ -294,6 +294,7 @@ func (h *httpHandler) handleRequest(ctx context.Context, conn net.Conn, req *htt
 		return resp.Write(conn)
 	}
 
+	ctx = xctx.ContextWithAuthResult(ctx, &xctx.AuthResult{})
 	clientID, ok := h.authenticate(ctx, conn, req, resp, log)
 	if !ok {
 		return errors.New("authentication failed")

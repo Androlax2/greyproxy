@@ -149,14 +149,9 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 		containerName, containerID = ResolveIdentity(clientID, srcIP)
 	}
 
-	// Per-container allow-all: if this container has an active session with allow_all=true,
-	// bypass ACL evaluation for it (used by greywall --learning mode).
-	if containerName != "" && greyproxy.IsContainerAllowAll(b.db, containerName) {
-		resolvedHostname := b.resolveHostname(host)
-		elapsed := time.Since(start).Milliseconds()
-		go b.logRequest(containerName, containerID, host, port, resolvedHostname, methodFromService(o.Service), "allowed", nil, &elapsed)
-		b.log.Debugf("SESSION-ALLOW-ALL %s -> %s:%d (%s)", containerName, host, port, network)
-		return false // allow
+	var identity *greyproxy.SessionIdentity
+	if result := ctxvalue.AuthResultFromContext(ctx); result != nil {
+		identity, _ = result.Identity.(*greyproxy.SessionIdentity)
 	}
 
 	// Resolve hostname
@@ -167,7 +162,7 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 	if resolvedHostname != "" {
 		matchHost = resolvedHostname
 	}
-	rule := greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname)
+	rule := greyproxy.FindMatchingSessionRule(b.db, containerName, host, port, resolvedHostname, identity)
 
 	// Determine decision
 	var allowed bool
@@ -184,7 +179,11 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 			ruleID = &rule.ID
 		}
 	}
-	// No rule = default deny (allowed stays false)
+	// Learning mode belongs only to the authenticated session and cannot override a deny.
+	if rule == nil && greyproxy.IsSessionAllowAll(b.db, containerName, identity) {
+		allowed = true
+	}
+	// No rule or session grant = default deny.
 
 	// Store the rule ID and conn tracker in the context's BypassResult
 	// so the handler can register the connection for cancellation.
@@ -203,7 +202,7 @@ func (b *Bypass) Contains(ctx context.Context, network, addr string, opts ...byp
 		done := b.waiters.Add(containerName, host, port)
 		defer done()
 
-		if rule := b.waitForApproval(ctx, containerName, host, port, resolvedHostname); rule != nil {
+		if rule := b.waitForApproval(ctx, containerName, host, port, resolvedHostname, identity); rule != nil {
 			allowed = true
 			ruleID = &rule.ID
 			if br := ctxvalue.BypassResultFromContext(ctx); br != nil {
@@ -266,7 +265,7 @@ func (b *Bypass) blockIfTargetsSelf(ctx context.Context, network, addr, service 
 // waitForApproval subscribes to the event bus and waits up to gracePeriod for
 // the user to allow the pending request. If a matching allow rule appears,
 // it returns that rule. Otherwise it returns nil.
-func (b *Bypass) waitForApproval(ctx context.Context, containerName, host string, port int, resolvedHostname string) *greyproxy.Rule {
+func (b *Bypass) waitForApproval(ctx context.Context, containerName, host string, port int, resolvedHostname string, identity *greyproxy.SessionIdentity) *greyproxy.Rule {
 	ch := b.bus.Subscribe(16)
 	defer b.bus.Unsubscribe(ch)
 
@@ -286,14 +285,14 @@ func (b *Bypass) waitForApproval(ctx context.Context, containerName, host string
 			case greyproxy.EventPendingAllowed:
 				// A pending was just allowed and a rule was created.
 				// Re-check if a rule now matches our connection.
-				if rule := greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname); rule != nil && rule.Action == "allow" {
+				if rule := greyproxy.FindMatchingSessionRule(b.db, containerName, host, port, resolvedHostname, identity); rule != nil && rule.Action == "allow" {
 					b.log.Debugf("APPROVED %s -> %s:%d during grace period (rule %d)", containerName, host, port, rule.ID)
 					return rule
 				}
 			case greyproxy.EventPendingDismissed:
 				// The user denied or dismissed the pending request.
 				// Stop waiting if there's no rule or if the matching rule is a deny.
-				rule := greyproxy.FindMatchingRule(b.db, containerName, host, port, resolvedHostname)
+				rule := greyproxy.FindMatchingSessionRule(b.db, containerName, host, port, resolvedHostname, identity)
 				if rule == nil || rule.Action == "deny" {
 					b.log.Debugf("DENIED %s -> %s:%d during grace period", containerName, host, port)
 					return nil

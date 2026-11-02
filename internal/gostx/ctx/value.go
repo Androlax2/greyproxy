@@ -91,6 +91,24 @@ func ClientIDFromContext(ctx context.Context) ClientID {
 	return v
 }
 
+// AuthResult carries private authenticator state to authorization without
+// putting credentials in the client ID used by logs and traffic accounting.
+// Handlers allocate one result per login; the authenticator fills it in.
+type AuthResult struct {
+	Identity any
+}
+
+type authResultKey struct{}
+
+func ContextWithAuthResult(ctx context.Context, result *AuthResult) context.Context {
+	return context.WithValue(ctx, authResultKey{}, result)
+}
+
+func AuthResultFromContext(ctx context.Context) *AuthResult {
+	result, _ := ctx.Value(authResultKey{}).(*AuthResult)
+	return result
+}
+
 // ConnCanceller allows registering connection cancel functions by rule ID.
 // Implemented by greyproxy.ConnTracker.
 type ConnCanceller interface {

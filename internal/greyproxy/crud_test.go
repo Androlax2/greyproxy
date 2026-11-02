@@ -649,8 +649,8 @@ func TestMigrations(t *testing.T) {
 	// Verify migration versions were recorded
 	var count int
 	_ = db.ReadDB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if count != 16 {
-		t.Errorf("expected 16 migration versions, got %d", count)
+	if count != 17 {
+		t.Errorf("expected 17 migration versions, got %d", count)
 	}
 }
 
@@ -1373,6 +1373,7 @@ func TestLayeredRuleResolution(t *testing.T) {
 	_, err = CreateOrUpdateSession(db, SessionCreateInput{
 		SessionID:     "gw-layer-test",
 		ContainerName: "codex",
+		ClientSecret:  "test-session-secret-0123456789abcdef",
 		Mappings:      map[string]string{"p": "v"},
 		Labels:        map[string]string{},
 		TTLSeconds:    300,
@@ -1385,7 +1386,8 @@ func TestLayeredRuleResolution(t *testing.T) {
 	}
 
 	// Global deny should win over session allow (strict mode)
-	rule := FindMatchingRule(db, "codex", "blocked.com", 443, "")
+	identity := testSessionIdentity(t, db, "codex")
+	rule := FindMatchingSessionRule(db, "codex", "blocked.com", 443, "", identity)
 	if rule == nil {
 		t.Fatal("expected to find a matching rule")
 	}
@@ -1405,6 +1407,7 @@ func TestSessionRuleMatchesContainer(t *testing.T) {
 	_, err := CreateOrUpdateSession(db, SessionCreateInput{
 		SessionID:     "gw-container-match",
 		ContainerName: "codex",
+		ClientSecret:  "test-session-secret-0123456789abcdef",
 		Mappings:      map[string]string{"p": "v"},
 		Labels:        map[string]string{},
 		TTLSeconds:    300,
@@ -1417,13 +1420,14 @@ func TestSessionRuleMatchesContainer(t *testing.T) {
 	}
 
 	// Should match for the session's container
-	rule := FindMatchingRule(db, "codex", "api.openai.com", 443, "")
+	identity := testSessionIdentity(t, db, "codex")
+	rule := FindMatchingSessionRule(db, "codex", "api.openai.com", 443, "", identity)
 	if rule == nil {
 		t.Fatal("expected rule to match for container 'codex'")
 	}
 
 	// Should NOT match for a different container
-	rule = FindMatchingRule(db, "aider", "api.openai.com", 443, "")
+	rule = FindMatchingSessionRule(db, "aider", "api.openai.com", 443, "", identity)
 	if rule != nil {
 		t.Errorf("expected no rule for container 'aider', got %+v", rule)
 	}
@@ -1437,6 +1441,7 @@ func TestSessionRuleDoesNotMatchAfterSessionDeleted(t *testing.T) {
 	_, err := CreateOrUpdateSession(db, SessionCreateInput{
 		SessionID:     "gw-deleted-session",
 		ContainerName: "codex",
+		ClientSecret:  "test-session-secret-0123456789abcdef",
 		Mappings:      map[string]string{"p": "v"},
 		Labels:        map[string]string{},
 		TTLSeconds:    300,
@@ -1449,7 +1454,8 @@ func TestSessionRuleDoesNotMatchAfterSessionDeleted(t *testing.T) {
 	}
 
 	// Rule matches while session is active
-	rule := FindMatchingRule(db, "codex", "api.openai.com", 443, "")
+	identity := testSessionIdentity(t, db, "codex")
+	rule := FindMatchingSessionRule(db, "codex", "api.openai.com", 443, "", identity)
 	if rule == nil {
 		t.Fatal("expected rule to match while session is active")
 	}
@@ -1461,60 +1467,24 @@ func TestSessionRuleDoesNotMatchAfterSessionDeleted(t *testing.T) {
 	}
 
 	// Rule must NOT match once the session is gone
-	rule = FindMatchingRule(db, "codex", "api.openai.com", 443, "")
+	rule = FindMatchingSessionRule(db, "codex", "api.openai.com", 443, "", identity)
 	if rule != nil {
 		t.Errorf("expected no rule after session deletion, got rule %d (session_id=%v)", rule.ID, rule.SessionID)
 	}
 }
 
-// TestNewerSessionSupersedesOlderSessionRules verifies that when a second session is
-// created for the same container, the first session's rules no longer apply -- even
-// while session 1 is still active. This is the core "session isolation" invariant:
-// the most recently created active session defines the effective rule set.
-func TestNewerSessionSupersedesOlderSessionRules(t *testing.T) {
+func TestUnidentifiedRequestCannotUseSessionRules(t *testing.T) {
 	db := setupTestDB(t)
 	clearBuiltinRules(t, db)
-	key := testEncryptionKey()
-
-	// Session 1: created with network rules (e.g. greywall --profile llm-coding)
 	_, err := CreateOrUpdateSession(db, SessionCreateInput{
-		SessionID:     "gw-session-1",
-		ContainerName: "claude",
-		Mappings:      map[string]string{"p1": "v1"},
-		Labels:        map[string]string{},
-		TTLSeconds:    300,
-		NetworkRules: []SessionNetworkRule{
-			{DestinationPattern: "api.anthropic.com", PortPattern: "443"},
-		},
-	}, key)
+		SessionID: "owner", ContainerName: "claude",
+		NetworkRules: []SessionNetworkRule{{DestinationPattern: "api.anthropic.com", PortPattern: "443"}},
+	}, testEncryptionKey())
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Session 1 is active: its rule must match
-	rule := FindMatchingRule(db, "claude", "api.anthropic.com", 443, "")
-	if rule == nil {
-		t.Fatal("expected rule to match for session 1")
-	}
-
-	// Session 2: same container, no network rules (e.g. greywall --no-network-rules)
-	// Session 1 is still alive (not deleted, not expired).
-	_, err = CreateOrUpdateSession(db, SessionCreateInput{
-		SessionID:     "gw-session-2",
-		ContainerName: "claude",
-		Mappings:      map[string]string{"p2": "v2"},
-		Labels:        map[string]string{},
-		TTLSeconds:    300,
-		NetworkRules:  nil,
-	}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Session 2 is the current session: session 1's rules must NOT match anymore
-	rule = FindMatchingRule(db, "claude", "api.anthropic.com", 443, "")
-	if rule != nil {
-		t.Errorf("session 1 rule must not apply when session 2 is active, got rule %d (session_id=%v)", rule.ID, rule.SessionID)
+	if rule := FindMatchingRule(db, "claude", "api.anthropic.com", 443, ""); rule != nil {
+		t.Errorf("unidentified request inherited a session grant: %+v", rule)
 	}
 }
 
@@ -1547,19 +1517,20 @@ func TestBuiltinLocalhostRules(t *testing.T) {
 	}
 }
 
-func TestContainerAllowAll(t *testing.T) {
+func TestSessionAllowAll(t *testing.T) {
 	db := setupTestDB(t)
 	key := testEncryptionKey()
 
 	// No allow_all session: should return false
-	if IsContainerAllowAll(db, "codex") {
-		t.Error("expected IsContainerAllowAll=false before session creation")
+	if IsSessionAllowAll(db, "codex", nil) {
+		t.Error("expected IsSessionAllowAll=false before session creation")
 	}
 
 	// Create session with allow_all=true
 	_, err := CreateOrUpdateSession(db, SessionCreateInput{
 		SessionID:     "gw-allowall",
 		ContainerName: "codex",
+		ClientSecret:  "test-session-secret-0123456789abcdef",
 		Mappings:      map[string]string{"p": "v"},
 		Labels:        map[string]string{},
 		TTLSeconds:    300,
@@ -1569,19 +1540,20 @@ func TestContainerAllowAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !IsContainerAllowAll(db, "codex") {
-		t.Error("expected IsContainerAllowAll=true after session creation with allow_all")
+	identity := testSessionIdentity(t, db, "codex")
+	if !IsSessionAllowAll(db, "codex", identity) {
+		t.Error("expected IsSessionAllowAll=true after session creation with allow_all")
 	}
 
 	// Different container should not be affected
-	if IsContainerAllowAll(db, "aider") {
-		t.Error("expected IsContainerAllowAll=false for different container")
+	if IsSessionAllowAll(db, "aider", identity) {
+		t.Error("expected IsSessionAllowAll=false for different container")
 	}
 
 	// Delete session, should revert
 	_, _ = DeleteSession(db, "gw-allowall")
-	if IsContainerAllowAll(db, "codex") {
-		t.Error("expected IsContainerAllowAll=false after session deletion")
+	if IsSessionAllowAll(db, "codex", identity) {
+		t.Error("expected IsSessionAllowAll=false after session deletion")
 	}
 }
 

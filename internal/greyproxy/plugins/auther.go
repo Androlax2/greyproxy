@@ -70,8 +70,16 @@ func (a *Auther) Authenticate(ctx context.Context, user, password string, opts .
 		id = fmt.Sprintf("%s|%s", clientIP, user)
 	}
 
-	if !a.isLoginAccepted(user, password, isAnonymous, clientIP) {
+	result := xctx.AuthResultFromContext(ctx)
+	if result != nil {
+		result.Identity = nil
+	}
+	identity, accepted := a.isLoginAccepted(user, password, isAnonymous, clientIP)
+	if !accepted {
 		return "", false
+	}
+	if result != nil {
+		result.Identity = identity
 	}
 
 	a.log.Debugf("auth: user=%s client=%s -> id=%s", user, clientIP, id)
@@ -79,38 +87,38 @@ func (a *Auther) Authenticate(ctx context.Context, user, password string, opts .
 }
 
 // isLoginAccepted logs every refusal with the client name, never the password.
-func (a *Auther) isLoginAccepted(user, password string, isAnonymous bool, clientIP string) bool {
+func (a *Auther) isLoginAccepted(user, password string, isAnonymous bool, clientIP string) (*greyproxy.SessionIdentity, bool) {
 	if isAnonymous {
 		if a.policy.RequireClientSecret && !a.policy.AllowAnonymous {
 			a.log.Warnf("auth refused: anonymous login from %s (anonymous clients are disabled)", clientIP)
-			return false
+			return nil, false
 		}
-		return true
+		return nil, true
 	}
 
 	if strings.HasPrefix(user, anonymousIdentityPrefix) {
 		a.log.Warnf("auth refused: client %q from %s uses the reserved %q prefix", user, clientIP, anonymousIdentityPrefix)
-		return false
+		return nil, false
 	}
 
-	secretHashes, err := greyproxy.LiveClientSecretHashes(a.db, user)
+	identity, hasSecrets, accepted, err := greyproxy.CheckClientSecret(a.db, user, password)
 	if err != nil {
 		a.log.Errorf("auth refused: client %q from %s: cannot check client secrets: %v", user, clientIP, err)
-		return false
+		return nil, false
 	}
-	if len(secretHashes) > 0 {
-		if greyproxy.ClientSecretMatches(password, secretHashes) {
-			return true
+	if hasSecrets {
+		if accepted {
+			return identity, true
 		}
 		a.log.Warnf("auth refused: client %q from %s sent a wrong client secret", user, clientIP)
-		return false
+		return nil, false
 	}
 
 	if a.policy.RequireClientSecret && !a.exemptNames[user] {
 		a.log.Warnf("auth refused: client %q from %s has no registered client secret", user, clientIP)
-		return false
+		return nil, false
 	}
-	return true
+	return nil, true
 }
 
 func extractClientIP(ctx context.Context) string {
